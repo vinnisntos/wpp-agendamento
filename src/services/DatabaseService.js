@@ -5,73 +5,93 @@ class DatabaseService {
         this.supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
     }
 
-    // Busca a empresa dona do chip
+    // Busca a empresa dona do chip (Multi-tenant entry point)
     async buscarEmpresaPorTelefone(telefoneBot) {
-        const { data, error } = await this.supabase
-            .from('profiles')
-            .select('*')
-            .eq('telefone_whatsapp', telefoneBot)
-            .single();
-            
-        return data; 
+        try {
+            const { data, error } = await this.supabase
+                .from('profiles')
+                .select('*')
+                .eq('telefone_whatsapp', telefoneBot)
+                .single();
+
+            if (error) throw error;
+            return data;
+        } catch (error) {
+            console.error('❌ Erro ao buscar empresa:', error.message);
+            return null;
+        }
     }
 
-    // LISTA SERVIÇOS: Usa 'profile_id' e 'ativo' (conforme seu print)
+    // Lista serviços ativos daquela empresa específica
     async listarServicos(profileId) {
-        const { data } = await this.supabase
+        const { data, error } = await this.supabase
             .from('servicos')
             .select('*')
             .eq('profile_id', profileId)
-            .eq('ativo', true);
+            .eq('ativo', true)
+            .order('nome', { ascending: true });
+
+        if (error) {
+            console.error('❌ Erro ao listar serviços:', error.message);
+            return [];
+        }
         return data || [];
     }
 
-    // NOVO: Como você tem tabela de 'clientes', precisamos garantir que o cliente existe
+    // Garante que o cliente existe no contexto daquela empresa
     async garantirCliente(profileId, telefone, nome) {
-        const { data, error } = await this.supabase
-            .from('clientes')
-            .upsert(
-                { profile_id: profileId, telefone: telefone, nome: nome },
-                { onConflict: 'profile_id, telefone' }
-            )
-            .select('id')
-            .single();
-            
-        if (error) console.error('Erro ao garantir cliente:', error);
-        return data?.id;
+        try {
+            const { data, error } = await this.supabase
+                .from('clientes')
+                .upsert(
+                    { profile_id: profileId, telefone: telefone, nome: nome },
+                    { onConflict: 'profile_id, telefone' }
+                )
+                .select('id')
+                .single();
+
+            if (error) throw error;
+            return data?.id;
+        } catch (error) {
+            console.error('❌ Erro ao garantir cliente:', error.message);
+            return null;
+        }
     }
 
-    // CRIAR AGENDAMENTO: Ajustado para usar 'data_hora_inicio' e 'cliente_id'
+    // Insere o agendamento no banco
     async criarAgendamento(agendamento) {
         const { data, error } = await this.supabase
             .from('agendamentos')
             .insert([agendamento])
             .select();
-        
-        if (error) throw error;
+
+        if (error) {
+            console.error('❌ Erro ao criar agendamento:', error.message);
+            throw error;
+        }
         return data;
     }
 
-    // BUSCAR AGENDAMENTOS: Ajustado para 'data_hora_inicio'
+    // Busca horários ocupados para evitar overbooking
     async buscarAgendamentosDoDia(profileId, data) {
-        // ⚠️ O ERRO ESTAVA AQUI: As variáveis abaixo precisam ser criadas!
         const inicioDia = `${data}T00:00:00Z`;
         const fimDia = `${data}T23:59:59Z`;
 
         const { data: agendamentos, error } = await this.supabase
-        .from('agendamentos')
-        .select('data_hora_inicio')
-        .eq('profile_id', profileId)
-        .gte('data_hora_inicio', inicioDia) // Agora ele sabe o que é inicioDia
-        .lte('data_hora_inicio', fimDia);   // Agora ele sabe o que é fimDia
+            .from('agendamentos')
+            .select('data_hora_inicio')
+            .eq('profile_id', profileId)
+            .neq('status', 'cancelado') // ✅ Importante: horários cancelados devem estar livres!
+            .gte('data_hora_inicio', inicioDia)
+            .lte('data_hora_inicio', fimDia);
 
         if (error) {
-            console.error('Erro ao buscar agendamentos:', error.message);
+            console.error('❌ Erro ao buscar agendamentos:', error.message);
             return [];
         }
 
-        // Mapeamos para manter a compatibilidade com o restante do código
-        return agendamentos.map(ag => ({ data_hora: ag.data_hora_inicio }));
+        // Retorna um array simples de strings de horários para facilitar a comparação no DateHelper
+        return agendamentos.map(ag => ag.data_hora_inicio);
     }
 }
 

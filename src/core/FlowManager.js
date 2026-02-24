@@ -1,155 +1,173 @@
 const db = require('../services/DatabaseService');
 const dateHelper = require('../services/DateHelper');
-const dayjs = require('dayjs'); // Adicionado o import
+const dayjs = require('dayjs');
 
 class FlowManager {
     constructor() {
         this.sessions = {};
+        // Limite de 5 minutos de inatividade
+        this.timeoutLimit = 5 * 60 * 1000; 
+        
+        // Middleware de limpeza: roda a cada 1 minuto
+        setInterval(() => this.limparSessoesInativas(), 60000);
     }
 
     async processarMensagem(msg, whatsappService) {
         const from = msg.key.remoteJid;
-        const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text;
+        const text = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || "").trim();
+        
         if (!text) return;
 
-        // 1. Pega o número do bot para saber de qual empresa estamos falando
+        // 1. Contexto da Empresa
         const meuNumero = whatsappService.sock.user.id.split(':')[0];
-        console.log("📱 O número do meu bot é:", meuNumero);
         const empresa = await db.buscarEmpresaPorTelefone(meuNumero);
 
         if (!empresa) {
-            console.error("❌ Erro: Este número de WhatsApp não está vinculado a nenhuma empresa no Supabase.");
+            console.error("❌ Erro: Empresa não encontrada para este número.");
             return;
         }
 
+        // 2. Guarda Global (Protocolo de Saída)
+        if (text === '0' || text.toLowerCase() === 'sair' || text.toLowerCase() === 'cancelar') {
+            await whatsappService.sendText(from, "Atendimento encerrado. 👋\nSe precisar de algo, estarei por aqui!");
+            delete this.sessions[from];
+            return;
+        }
+
+        // 3. Gestão de Sessão e Inatividade
         if (!this.sessions[from]) {
-            // 2. Já guardamos o profile_id da empresa na sessão logo no início
             this.sessions[from] = { 
                 step: 0, 
-                dados: { 
-                    telefone: from,
-                    profile_id: empresa.id // Guardado aqui para os próximos passos
-                } 
+                dados: { telefone: from, profile_id: empresa.id },
+                lastInteraction: Date.now()
             };
+        } else {
+            // Atualiza o timestamp a cada nova mensagem recebida
+            this.sessions[from].lastInteraction = Date.now();
         }
         
         const session = this.sessions[from];
 
+        // 4. Fluxo de Estados
         switch (session.step) {
-            case 0: // Identificação
-                await whatsappService.sendText(from, `Olá! Bem-vinda ao salão *${empresa.nome_negocio}*. ✨\nQual é o seu nome, por favor?`);
+            case 0: // Boas-vindas
+                await whatsappService.sendText(from, `Olá! Bem-vinda a *${empresa.nome_negocio}*. ✨\nQual é o seu nome, por favor?\n\n_(Digite 0 para sair)_`);
                 session.step = 1;
                 break;
 
-            case 1: // Salva Nome e Mostra Serviços
+            case 1: // Nome -> Serviços
                 session.dados.nome = text;
                 const servicos = await db.listarServicos(session.dados.profile_id);
                 session.tempServicos = servicos;
 
-                let menuServ = `Prazer, ${text}! O que vamos fazer hoje?\n\n`;
+                let menuServ = `Prazer, *${text}*! O que vamos fazer hoje?\n\n`;
                 servicos.forEach((s, i) => menuServ += `${i + 1}. ${s.nome} (R$ ${s.preco})\n`);
+                menuServ += `\n0. Sair`;
                 
                 await whatsappService.sendText(from, menuServ);
                 session.step = 2;
                 break;
 
-            case 2: // Escolha de Data
+            case 2: // Serviço -> Dias
                 const servIdx = parseInt(text) - 1;
-                if (session.tempServicos && session.tempServicos[servIdx]) {
+                if (session.tempServicos?.[servIdx]) {
                     session.dados.servico_id = session.tempServicos[servIdx].id;
                     const dias = dateHelper.getDiasDisponiveis();
                     session.tempDias = dias;
 
                     let menuDias = "Para qual dia você deseja agendar?\n\n";
                     dias.forEach((d, i) => menuDias += `${i + 1}. ${d.label}\n`);
+                    menuDias += `\n0. Sair`;
                     
                     await whatsappService.sendText(from, menuDias);
                     session.step = 3;
                 } else {
-                    await whatsappService.sendText(from, "Opção inválida. Digite o número do serviço.");
+                    await whatsappService.sendText(from, "Opção inválida. Digite o número do serviço ou 0 para sair.");
                 }
                 break;
 
-            case 3: // Escolha de Horário
+            case 3: // Dia -> Horários
                 const diaIdx = parseInt(text) - 1;
-                if (session.tempDias && session.tempDias[diaIdx]) {
+                if (session.tempDias?.[diaIdx]) {
                     session.dados.data = session.tempDias[diaIdx].valor;
                     
+                    // Busca agendamentos e filtra os horários livres
                     const ocupados = await db.buscarAgendamentosDoDia(session.dados.profile_id, session.dados.data);
                     const livres = await dateHelper.getHorariosLivres(session.dados.data, ocupados);
                     session.tempHoras = livres;
 
+                    // --- VALIDAÇÃO DE DISPONIBILIDADE ---
+                    if (livres.length === 0) {
+                        await whatsappService.sendText(from, "Poxa, esse dia já está totalmente preenchido. 😅\nPor favor, escolha outro dia da lista:");
+                        
+                        // Reexibe o menu de dias para o usuário não se perder
+                        let menuDias = "";
+                        session.tempDias.forEach((d, i) => menuDias += `${i + 1}. ${d.label}\n`);
+                        await whatsappService.sendText(from, menuDias);
+                        
+                        session.step = 3; // Mantém no step 3 para ele tentar outro dia
+                        return; 
+                    }
+
                     let menuHoras = `Horários disponíveis para ${session.tempDias[diaIdx].label}:\n\n`;
                     livres.forEach((h, i) => menuHoras += `${i + 1}. ${h}\n`);
+                    menuHoras += `\n0. Sair`;
                     
                     await whatsappService.sendText(from, menuHoras);
                     session.step = 4;
                 } else {
-                    await whatsappService.sendText(from, "Escolha um dia da lista acima.");
+                    await whatsappService.sendText(from, "Escolha um dia da lista ou digite 0 para sair.");
                 }
                 break;
 
-            // Localize o case 4 no seu FlowManager.js e ajuste assim:
-
-            case 4: 
+            case 4: // Horário -> Finalização
                 const horaIdx = parseInt(text) - 1;
-                if (session.tempHoras && session.tempHoras[horaIdx]) {
+                if (session.tempHoras?.[horaIdx]) {
                     try {
-                        // 1. Horário de Início
-                        const finalDataHora = `${session.dados.data}T${session.tempHoras[horaIdx]}:00Z`;
-                        
-                        // 2. Pegamos a duração do serviço que salvamos no Case 1
-                        const servicoEscolhido = session.tempServicos.find(s => s.id === session.dados.servico_id);
-                        const duracao = servicoEscolhido?.duracao_minutos || 30; // 30min de fallback se der ruim
+                        const servico = session.tempServicos.find(s => s.id === session.dados.servico_id);
+                        const dataHoraInicio = `${session.dados.data}T${session.tempHoras[horaIdx]}:00Z`;
+                        const dataHoraFim = dayjs(dataHoraInicio).add(servico?.duracao_minutos || 30, 'minute').toISOString();
 
-                        // 3. Calculamos o Horário de Fim usando Dayjs
-                        const dataHoraFim = dayjs(finalDataHora).add(duracao, 'minute').toISOString();
+                        const clienteId = await db.garantirCliente(session.dados.profile_id, session.dados.telefone, session.dados.nome);
 
-                        // 4. Garante o cliente
-                        const clienteId = await db.garantirCliente(
-                            session.dados.profile_id, 
-                            session.dados.telefone, 
-                            session.dados.nome
-                        );
-
-                        // 5. Monta o objeto com INÍCIO e FIM
-                        const agendamento = {
+                        await db.criarAgendamento({
                             profile_id: session.dados.profile_id,
                             cliente_id: clienteId,
                             servico_id: session.dados.servico_id,
-                            data_hora_inicio: finalDataHora,
-                            data_hora_fim: dataHoraFim, // ✅ Agora o banco não reclama mais!
+                            data_hora_inicio: dataHoraInicio,
+                            data_hora_fim: dataHoraFim,
                             status: 'pendente'
-                        };
+                        });
 
-                        const sucesso = await db.criarAgendamento(agendamento);
-
-
-                        if (sucesso) {
-                            // 🚀 LOG NO CONSOLE PARA O DESENVOLVEDOR (VOCÊ!)
-                            console.log(`\n✨ [NOVO AGENDAMENTO REALIZADO] ✨`);
-                            console.log(`🏢 Empresa: ${empresa.nome_negocio || 'Barbearia Teste'}`);
-                            console.log(`👤 Cliente: ${session.dados.nome}`);
-                            console.log(`📞 Contato: ${session.dados.telefone}`);
-                            console.log(`💇 Serviço: ${servicoEscolhido.nome}`);
-                            console.log(`📅 Data/Hora: ${dayjs(finalDataHora).format('DD/MM/YYYY HH:mm')}`);
-                            console.log(`🆔 ID no Banco: ${sucesso[0].id}`); // Pega o ID que o banco acabou de gerar
-                            console.log(`------------------------------------------\n`);
-
-                const dataFormatada = dayjs(finalDataHora).format('DD/MM [às] HH:mm');
-                await whatsappService.sendText(from, `✅ *Agendado com sucesso!* \n\nTe esperamos dia ${dataFormatada}.`);
-                delete this.sessions[from];
-            }
-
+                        const dataFormatada = dayjs(dataHoraInicio).format('DD/MM [às] HH:mm');
+                        await whatsappService.sendText(from, `✅ *Agendado com sucesso!*\n\n*Serviço:* ${servico.nome}\n*Horário:* ${dataFormatada}\n\nTe esperamos! 👋`);
+                        
+                        delete this.sessions[from]; 
                     } catch (error) {
-                        console.error("❌ Erro ao processar agendamento:", error);
-                        await whatsappService.sendText(from, "Ops! Tive um problema ao salvar seu horário. Pode tentar novamente?");
+                        console.error("❌ Erro ao criar agendamento:", error);
+                        await whatsappService.sendText(from, "Erro ao salvar agendamento. Tente novamente.");
                     }
+                } else {
+                    await whatsappService.sendText(from, "Opção inválida. Escolha um horário da lista.");
                 }
+                break;
+
+            default:
+                await whatsappService.sendText(from, "Não entendi. Vamos recomeçar? Qual é o seu nome?");
+                session.step = 1;
                 break;
         }
     }
+
+    limparSessoesInativas() {
+        const agora = Date.now();
+        Object.keys(this.sessions).forEach(from => {
+            if (agora - this.sessions[from].lastInteraction > this.timeoutLimit) {
+                console.log(`♻️ [Sessão Expirada]: ${from}`);
+                delete this.sessions[from];
+            }
+        });
+    }
 }
 
-// 3. ESSA LINHA É A QUE FALTAVA:
 module.exports = new FlowManager();
