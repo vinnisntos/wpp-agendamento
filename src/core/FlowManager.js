@@ -124,11 +124,6 @@ class FlowManager {
 
                         const sucesso = await db.criarAgendamento(agendamento);
 
-                        if (sucesso) {
-                            const dataFormatada = dayjs(finalDataHora).format('DD/MM [às] HH:mm');
-                            await whatsappService.sendText(from, `✅ *Agendado com sucesso!* \n\nTe esperamos dia ${dataFormatada}.`);
-                            delete this.sessions[from];
-                        }
 
                         if (sucesso) {
                             // 🚀 LOG NO CONSOLE PARA O DESENVOLVEDOR (VOCÊ!)
