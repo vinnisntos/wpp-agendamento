@@ -5,7 +5,7 @@ class DatabaseService {
         this.supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
     }
 
-    // Busca a empresa dona do chip (Multi-tenant entry point)
+    // Busca a empresa dona do chip
     async buscarEmpresaPorTelefone(telefoneBot) {
         try {
             const { data, error } = await this.supabase
@@ -22,7 +22,7 @@ class DatabaseService {
         }
     }
 
-    // Lista serviços ativos daquela empresa específica
+    // Lista serviços ativos especificos para a empresa selecionada
     async listarServicos(profileId) {
         const { data, error } = await this.supabase
             .from('servicos')
@@ -38,7 +38,7 @@ class DatabaseService {
         return data || [];
     }
 
-    // Garante que o cliente existe no contexto daquela empresa
+    // Garante que o cliente existe no contexto daquela consulta, evitando duplicidade e facilitando futuras consultas
     async garantirCliente(profileId, telefone, nome) {
         try {
             const { data, error } = await this.supabase

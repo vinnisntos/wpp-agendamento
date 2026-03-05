@@ -50,22 +50,27 @@ class FlowManager {
 
         // 4. Fluxo de Estados
         switch (session.step) {
-            case 0: // Boas-vindas
-                await whatsappService.sendText(from, `Olá! Bem-vinda a *${empresa.nome_negocio}*. ✨\nQual é o seu nome, por favor?\n\n_(Digite 0 para sair)_`);
-                session.step = 1;
-                break;
+           case 0: // Boas-vindas
+                const clienteExistente = await db.buscarClientePorTelefone(from);
 
-            case 1: // Nome -> Serviços
-                session.dados.nome = text;
-                const servicos = await db.listarServicos(session.dados.profile_id);
-                session.tempServicos = servicos;
+                if (clienteExistente) {
+                    session.dados.nome = clienteExistente.nome;
+                    session.dados.cliente_id = clienteExistente.id; // Já salva o ID
+                    
+                    await whatsappService.sendText(from, `Olá, *${clienteExistente.nome}*! Que bom te ver de novo na *${empresa.nome_negocio}*. ✨`);
+                    
+                    // Pula direto para a listagem de serviços (Lógica do Case 1)
+                    const servicos = await db.listarServicos(session.dados.profile_id);
+                    session.tempServicos = servicos;
+                    let menuServ = `O que vamos fazer hoje?\n\n`;
+                    servicos.forEach((s, i) => menuServ += `${i + 1}. ${s.nome} (R$ ${s.preco})\n`);
 
-                let menuServ = `Prazer, *${text}*! O que vamos fazer hoje?\n\n`;
-                servicos.forEach((s, i) => menuServ += `${i + 1}. ${s.nome} (R$ ${s.preco})\n`);
-                menuServ += `\n0. Sair`;
-                
-                await whatsappService.sendText(from, menuServ);
-                session.step = 2;
+                    await whatsappService.sendText(from, menuServ);
+                    session.step = 2; // Pula o step 1
+                } else {
+                    await whatsappService.sendText(from, `Olá! Bem-vindo(a) a *${empresa.nome_negocio}*. ✨\nQual é o seu nome, por favor?`);
+                    session.step = 1;
+                }
                 break;
 
             case 2: // Serviço -> Dias
