@@ -34,13 +34,15 @@ async function iniciarCadastro() {
             ])
             .select();
 
+        // verifica se houve erro na inserção
         if (error) throw error;
-
+        
         console.log("\n✅ Empresa cadastrada com sucesso!");
         console.log("🆔 ID Gerado:", data[0].id);
         console.log("------------------------------------------");
 
     } catch (err) {
+        // em caso de erro mostra mensagem clara para o usuário
         console.error("\n❌ Erro ao cadastrar:", err.message);
     } finally {
         rl.close();
