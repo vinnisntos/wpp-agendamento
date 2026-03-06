@@ -31,7 +31,7 @@ class DateHelper {
     }
 
     // Filtra horários livres para um dia específico
-    async getHorariosLivres(dataEscolhida, agendamentosOcupados) {
+    async getHorariosLivres(dataEscolhida, agendamentosOcupados = []) {
         const agora = dayjs();
         const ehHoje = dataEscolhida === agora.format('YYYY-MM-DD');
 
@@ -39,12 +39,13 @@ class DateHelper {
             // 1. Remove horários que já passaram (se for hoje)
             if (ehHoje) {
                 const [h, m] = hora.split(':');
-                const horaSlot = agora.set('hour', h).set('minute', m);
+                const horaSlot = dayjs().set('hour', h).set('minute', m).set('second', 0);
                 if (horaSlot.isBefore(agora)) return false;
             }
 
             // 2. Remove horários que já estão no banco de dados
-            const ocupado = agendamentosOcupados.some(ag => ag.data_hora.includes(hora));
+            // Correção: agendamentosOcupados já é um array de strings vindo do Supabase
+            const ocupado = agendamentosOcupados.some(ag => ag && typeof ag === 'string' && ag.includes(hora));
             return !ocupado;
         });
     }
