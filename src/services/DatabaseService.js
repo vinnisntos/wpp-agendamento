@@ -5,93 +5,86 @@ class DatabaseService {
         this.supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
     }
 
-    // Busca a empresa dona do chip
-    async buscarEmpresaPorTelefone(telefoneBot) {
-        try {
-            const { data, error } = await this.supabase
-                .from('profiles')
-                .select('*')
-                .eq('telefone_whatsapp', telefoneBot)
-                .single();
-
-            if (error) throw error;
-            return data;
-        } catch (error) {
-            console.error('❌ Erro ao buscar empresa:', error.message);
-            return null;
-        }
+    // ✅ NOVO: Necessário para o passo WELCOME
+    async buscarClientePorTelefone(telefone) {
+        const { data, error } = await this.supabase
+            .from('clientes')
+            .select('*')
+            .eq('telefone', telefone)
+            .maybeSingle(); // maybeSingle não dá erro se não achar
+        return data;
     }
 
-    // Lista serviços ativos especificos para a empresa selecionada
-    async listarServicos(profileId) {
+    // ✅ NOVO: Necessário para o passo FINALIZAR (pegar o token da empresa)
+    async buscarEmpresaPorId(id) {
         const { data, error } = await this.supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', id)
+            .single();
+        return data;
+    }
+
+    async buscarEmpresaPorTelefone(telefoneBot) {
+        const { data, error } = await this.supabase
+            .from('profiles')
+            .select('*')
+            .eq('telefone_whatsapp', telefoneBot)
+            .single();
+        return data;
+    }
+
+    async listarServicos(profileId) {
+        const { data } = await this.supabase
             .from('servicos')
             .select('*')
             .eq('profile_id', profileId)
-            .eq('ativo', true)
-            .order('nome', { ascending: true });
-
-        if (error) {
-            console.error('❌ Erro ao listar serviços:', error.message);
-            return [];
-        }
+            .eq('ativo', true);
         return data || [];
     }
 
-    // Garante que o cliente existe no contexto daquela consulta, evitando duplicidade e facilitando futuras consultas
     async garantirCliente(profileId, telefone, nome) {
-        try {
-            const { data, error } = await this.supabase
-                .from('clientes')
-                .upsert(
-                    { profile_id: profileId, telefone: telefone, nome: nome },
-                    { onConflict: 'profile_id, telefone' }
-                )
-                .select('id')
-                .single();
-
-            if (error) throw error;
-            return data?.id;
-        } catch (error) {
-            console.error('❌ Erro ao garantir cliente:', error.message);
-            return null;
-        }
+        const { data, error } = await this.supabase
+            .from('clientes')
+            .upsert(
+                { profile_id: profileId, telefone: telefone, nome: nome },
+                { onConflict: 'profile_id, telefone' }
+            )
+            .select('id').single();
+        return data?.id;
     }
 
-    // Insere o agendamento no banco
     async criarAgendamento(agendamento) {
         const { data, error } = await this.supabase
             .from('agendamentos')
             .insert([agendamento])
-            .select();
-
-        if (error) {
-            console.error('❌ Erro ao criar agendamento:', error.message);
-            throw error;
-        }
+            .select().single();
+        if (error) throw error;
         return data;
     }
 
-    // Busca horários ocupados para evitar overbooking
+    // ✅ Ajustado: Busca pelo external_reference que é o ID do pagamento do MP
+    async confirmarPagamentoNoSupabase(paymentId) {
+        const { data, error } = await this.supabase
+            .from('agendamentos')
+            .update({ status: 'confirmado' })
+            .eq('external_reference', String(paymentId))
+            .select('telefone, status')
+            .single();
+        return { data, error };
+    }
+
     async buscarAgendamentosDoDia(profileId, data) {
         const inicioDia = `${data}T00:00:00Z`;
         const fimDia = `${data}T23:59:59Z`;
-
-        const { data: agendamentos, error } = await this.supabase
+        const { data: agendamentos } = await this.supabase
             .from('agendamentos')
             .select('data_hora_inicio')
             .eq('profile_id', profileId)
-            .neq('status', 'cancelado') // ✅ Importante: horários cancelados devem estar livres!
+            .neq('status', 'cancelado')
             .gte('data_hora_inicio', inicioDia)
             .lte('data_hora_inicio', fimDia);
-
-        if (error) {
-            console.error('❌ Erro ao buscar agendamentos:', error.message);
-            return [];
-        }
-
-        // Retorna um array simples de strings de horários para facilitar a comparação no DateHelper
-        return agendamentos.map(ag => ag.data_hora_inicio);
+        return agendamentos?.map(ag => ag.data_hora_inicio) || [];
     }
 }
 
