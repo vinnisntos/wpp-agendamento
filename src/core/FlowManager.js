@@ -19,35 +19,36 @@ class FlowManager {
             return;
         }
 
-        if (!this.sessions[from]) {
-            const meuNumero = whatsappService.sock.user.id.split(':')[0];
-            const empresa = await db.buscarEmpresaPorTelefone(meuNumero);
-            
-            // ✅ Validação: Se o número do bot não estiver no banco, ignora
-            if (!empresa) {
-                console.error(`⚠️ O número ${meuNumero} não está vinculado a nenhuma empresa no banco.`);
-                return;
+        try {
+            // ✅ CORREÇÃO: Tudo dentro do try/catch para erros não matarem o bot
+            if (!this.sessions[from]) {
+                // Pega só os números do ID do bot para não dar erro no banco
+                const meuNumero = whatsappService.sock.user.id.split(':')[0].replace(/\D/g, '');
+                const empresa = await db.buscarEmpresaPorTelefone(meuNumero);
+                
+                if (!empresa) {
+                    console.error(`⚠️ ATENÇÃO: O número do bot (${meuNumero}) não está na tabela 'profiles'.`);
+                    return; // Ignora se a empresa não existir
+                }
+
+                this.sessions[from] = {
+                    step: 'WELCOME', 
+                    dados: { telefone: from, profile_id: empresa.id },
+                    lastInteraction: Date.now()
+                };
             }
 
-            this.sessions[from] = {
-                step: 'WELCOME', 
-                dados: { telefone: from, profile_id: empresa.id },
-                lastInteraction: Date.now()
-            };
-        }
+            const session = this.sessions[from];
+            session.lastInteraction = Date.now();
 
-        const session = this.sessions[from];
-        session.lastInteraction = Date.now();
-
-        try {
             const handler = states[session.step];
             if (handler) {
                 await handler(session, text, whatsappService);
             }
         } catch (error) {
-            console.error(`❌ Erro no fluxo (${session.step}):`, error);
+            console.error(`❌ Erro no fluxo:`, error);
             await whatsappService.sendText(from, "Ops, tive um erro técnico. Digite seu nome para recomeçar.");
-            session.step = 'WELCOME'; 
+            if (this.sessions[from]) this.sessions[from].step = 'WELCOME'; 
         }
     }
 

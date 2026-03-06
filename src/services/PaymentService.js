@@ -1,7 +1,8 @@
 const { MercadoPagoConfig, Payment } = require('mercadopago');
 
 class PaymentService {
-    async gerarPix(valor, nome, accessToken, agendamentoId) {
+    // ✅ CORREÇÃO: Removido o agendamentoId dos parâmetros para bater com o states.js
+    async gerarPix(valor, nome, accessToken) {
         if (!accessToken) throw new Error("Token do Mercado Pago ausente.");
 
         const client = new MercadoPagoConfig({ accessToken });
@@ -11,7 +12,6 @@ class PaymentService {
             transaction_amount: parseFloat(valor),
             description: `Reserva de Horário - ${nome}`,
             payment_method_id: 'pix',
-            external_reference: String(agendamentoId), 
             payer: { email: 'cliente@agendamento.com' },
             date_of_expiration: new Date(Date.now() + 15 * 60000).toISOString(), 
         };

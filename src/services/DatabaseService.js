@@ -5,17 +5,15 @@ class DatabaseService {
         this.supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
     }
 
-    // ✅ NOVO: Necessário para o passo WELCOME
     async buscarClientePorTelefone(telefone) {
         const { data, error } = await this.supabase
             .from('clientes')
             .select('*')
             .eq('telefone', telefone)
-            .maybeSingle(); // maybeSingle não dá erro se não achar
+            .maybeSingle(); 
         return data;
     }
 
-    // ✅ NOVO: Necessário para o passo FINALIZAR (pegar o token da empresa)
     async buscarEmpresaPorId(id) {
         const { data, error } = await this.supabase
             .from('profiles')
@@ -26,11 +24,12 @@ class DatabaseService {
     }
 
     async buscarEmpresaPorTelefone(telefoneBot) {
+        // ✅ CORREÇÃO: Usar maybeSingle() para não estourar erro se não achar a empresa
         const { data, error } = await this.supabase
             .from('profiles')
             .select('*')
             .eq('telefone_whatsapp', telefoneBot)
-            .single();
+            .maybeSingle();
         return data;
     }
 
@@ -63,7 +62,6 @@ class DatabaseService {
         return data;
     }
 
-    // ✅ Ajustado: Busca pelo external_reference que é o ID do pagamento do MP
     async confirmarPagamentoNoSupabase(paymentId) {
         const { data, error } = await this.supabase
             .from('agendamentos')
