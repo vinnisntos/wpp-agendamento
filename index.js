@@ -45,9 +45,10 @@ app.post('/webhook', async (req, res) => {
 });
 
 // 2. Inicia o Servidor Web na porta 3000 (evita bloqueio de root do Linux)
-const PORT = 3000; 
-
-// O '0.0.0.0' é a chave mágica do Linux para aceitar conexões da internet toda
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🌐 Webhook escutando de portas escancaradas na ${PORT}`);
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`🌐 Webhook escutando na porta ${PORT}`);
 });
+
+// 3. Inicia o robô do WhatsApp
+whatsappService.start();
