@@ -1,47 +1,53 @@
 require('dotenv').config();
 const express = require('express');
 const whatsappService = require('./src/services/WhatsappService');
-const db = require('./src/services/DatabaseService'); // Para atualizar o status no Supabase
+const db = require('./src/services/DatabaseService'); 
 
 const app = express();
 app.use(express.json());
 
 console.log('🚀 Iniciando Sistema v2.0 (Azure Cloud Edition)...');
 
-// 1. Rota de Webhook para o Pagamento (O Banco avisa aqui)
+// 1. Rota de Webhook
 app.post('/webhook', async (req, res) => {
-    try {
-        const { action, data } = req.body;
+    // 🕵️ ESPIÃO: Printa TUDO que chegar, independente do formato
+    console.log("🔔 [ALERTA] Bateram na porta do Webhook!");
+    console.log("📦 Corpo (Body):", req.body);
+    console.log("🔗 URL (Query):", req.query);
 
-        // Se o pagamento foi aprovado no Mercado Pago/Asaas
-        if (action === 'payment.updated' || action === 'payment.created') {
-            const paymentId = data.id;
-            
-            // Aqui você buscaria no banco o agendamento com esse ID
-            // e mudaria o status para 'confirmado'
+    try {
+        // O MP às vezes manda a 'action' no body, e às vezes manda 'topic' na query.
+        // O espião acima vai nos mostrar exatamente como está chegando pra você.
+        
+        const action = req.body.action || req.body.type || req.query.topic;
+        const paymentId = req.body.data?.id || req.query.id;
+
+        if (paymentId) {
+            console.log(`🔎 Buscando pagamento ${paymentId} no banco...`);
             const { data: agendamento, error } = await db.confirmarPagamentoNoSupabase(paymentId);
 
             if (agendamento && !error) {
-                // Notifica o cliente via WhatsApp automaticamente
                 await whatsappService.sendText(
                     agendamento.telefone, 
-                    `✅ *Pagamento Confirmado!*\nSeu horário para *${agendamento.servico_nome}* está garantido.`
+                    `✅ *Pagamento Confirmado!*\nSeu horário está garantido. Te esperamos! 🚀`
                 );
-                console.log(`💰 Pagamento ${paymentId} confirmado para ${agendamento.telefone}`);
+                console.log(`💰 SUCESSO! Pagamento ${paymentId} confirmado para ${agendamento.telefone}`);
+            } else {
+                console.log(`⚠️ Pagamento ${paymentId} recebido, mas agendamento não encontrado no banco ou já confirmado.`);
             }
         }
-        res.sendStatus(200); // Responde 200 pro banco não ficar tentando enviar de novo
+        
+        res.sendStatus(200); 
     } catch (err) {
         console.error('❌ Erro no Webhook:', err);
         res.sendStatus(500);
     }
 });
 
-// 2. Inicia o Servidor Web na porta da Azure (geralmente 80 ou 443)
-const PORT = process.env.PORT || 80;
-app.listen(PORT, () => {
-    console.log(`🌐 Webhook rodando na porta ${PORT}`);
-});
+// 2. Inicia o Servidor Web na porta 3000 (evita bloqueio de root do Linux)
+const PORT = 3000; 
 
-// 3. Inicia o robô do WhatsApp
-whatsappService.start();
+// O '0.0.0.0' é a chave mágica do Linux para aceitar conexões da internet toda
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🌐 Webhook escutando de portas escancaradas na ${PORT}`);
+});
